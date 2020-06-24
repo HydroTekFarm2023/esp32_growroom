@@ -131,7 +131,7 @@
 
 // commands
 #define BME680_RESET_CMD            0xb6    // BME680_REG_RESET<7:0>
-#define BME680_RESET_PERIOD         5       // reset time in ms
+#define BME680_RESET_PERIOD         10       // reset time in ms
 
 #define BME680_RHR_BITS             0x30    // BME680_REG_RES_HEAT_RANGE<5:4>
 #define BME680_RHR_SHIFT            4       // BME680_REG_RES_HEAT_RANGE<5:4>
@@ -415,7 +415,6 @@ esp_err_t bme680_init_sensor(bme680_t *dev)
     }
 
     uint8_t buf[BME680_CDM_SIZE];
-    vTaskDelay(pdMS_TO_TICKS(10));
     I2C_DEV_CHECK(&dev->i2c_dev, i2c_dev_read_reg(&dev->i2c_dev, BME680_REG_CD1_ADDR, buf + BME680_CDM_OFF1, BME680_REG_CD1_LEN));
     I2C_DEV_CHECK(&dev->i2c_dev, i2c_dev_read_reg(&dev->i2c_dev, BME680_REG_CD2_ADDR, buf + BME680_CDM_OFF2, BME680_REG_CD2_LEN));
     I2C_DEV_CHECK(&dev->i2c_dev, i2c_dev_read_reg(&dev->i2c_dev, BME680_REG_CD3_ADDR, buf + BME680_CDM_OFF3, BME680_REG_CD3_LEN));
