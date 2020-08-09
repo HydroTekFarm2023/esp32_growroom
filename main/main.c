@@ -18,6 +18,7 @@
 #include <stdbool.h>
 
 #include "bme680.h"
+#include "ds3231.h"
 #include "rf_transmission.h"
 
 // WiFi Coordination with Event Group
