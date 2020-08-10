@@ -31,6 +31,10 @@ static EventGroupHandle_t sensor_event_group;
 #define DELAY_BIT		    (1<<0)
 #define BME_BIT           (1<<5)
 
+// Core 0 Task Priorities
+#define TIMER_ALARM_TASK_PRIORITY 1
+#define MQTT_PUBLISH_TASK_PRIORITY 2
+
 // Core 1 Task Priorities
 #define BME_TASK_PRIORITY 1
 #define SYNC_TASK_PRIORITY 2
@@ -60,9 +64,18 @@ static float _humidity = 0;
 // RTC Components
 i2c_dev_t dev;
 
+// Timer and alarm periods
+static const uint32_t timer_alarm_urgent_delay = 10;
+static const uint32_t timer_alarm_regular_delay = 50;
+
+// Timers
+
+// Alarms
+
 // Task Handles
 static TaskHandle_t bme_task_handle = NULL;
 static TaskHandle_t sync_task_handle = NULL;
+static TaskHandle_t timer_alarm_task_handle = NULL;
 static TaskHandle_t publish_task_handle = NULL;
 
 // Sensor Active Status
@@ -322,7 +335,7 @@ void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
 		data = NULL;
 
 		// Publish data every 20 seconds
-		vTaskDelay(pdMS_TO_TICKS(5000));
+		vTaskDelay(pdMS_TO_TICKS(SENSOR_MEASUREMENT_PERIOD));
 	}
 }
 
@@ -396,6 +409,33 @@ void sync_task(void *parameter) {				// Sensor Synchronization Task
 	}
 }
 
+static void manage_timers_alarms(void *parameter) {
+	const char *TAG = "TIMER_TASK";
+
+	// Initialize timers
+
+	// Initialize alarms
+
+	ESP_LOGI(TAG, "Timers initialized");
+
+	for(;;) {
+		// Get current unix time
+		time_t unix_time;
+		get_unix_time(&dev, &unix_time);
+
+		// Check if timers are done
+
+		// Check if alarms are done
+
+		// Check if any timer or alarm is urgent
+		bool urgent = false;
+
+		// Set priority and delay based on urgency of timers and alarms
+		vTaskPrioritySet(timer_alarm_task_handle, urgent ? (configMAX_PRIORITIES - 1) : TIMER_ALARM_TASK_PRIORITY);
+		vTaskDelay(pdMS_TO_TICKS(urgent ? timer_alarm_urgent_delay : timer_alarm_regular_delay));
+	}
+}
+
 void send_rf_transmission(){
 	// Setup Transmission Protcol
 	struct binary_bits low_bit = {3, 1};
@@ -453,7 +493,8 @@ void app_main(void) {							// Main Method
 		set_sensor_sync_bits(&sensor_sync_bits);
 
 		// Create core 0 tasks
-		xTaskCreatePinnedToCore(publish_data, "publish_task", 2500, NULL, 1, &publish_task_handle, 0);
+		xTaskCreatePinnedToCore(manage_timers_alarms, "timer_alarm_task", 2500, NULL, TIMER_ALARM_TASK_PRIORITY, &timer_alarm_task_handle, 0);
+		xTaskCreatePinnedToCore(publish_data, "publish_task", 2500, NULL, MQTT_PUBLISH_TASK_PRIORITY, &publish_task_handle, 0);
 
 		// Create core 1 tasks
 		if(bme_active) xTaskCreatePinnedToCore(measure_bme, "bme_task", 2500, NULL, BME_TASK_PRIORITY, &bme_task_handle, 1);
