@@ -36,8 +36,10 @@ static EventGroupHandle_t sensor_event_group;
 #define SYNC_TASK_PRIORITY 2
 
 // GPIO Ports
-#define BME_SCL_GPIO 22                 // GPIO 22
 #define BME_SDA_GPIO 21                 // GPIO 21
+#define RTC_SDA_GPIO 21                 // GPIO 21
+#define BME_SCL_GPIO 22                 // GPIO 22
+#define RTC_SCL_GPIO 22                 // GPIO 22
 #define RF_TRANSMITTER_GPIO 32			// GPIO 32
 
 #define SENSOR_MEASUREMENT_PERIOD 10000 // Measuring increment time in ms
@@ -55,6 +57,9 @@ static char system_id[] = "system2";
 static float _air_temp = 0;
 static float _humidity = 0;
 
+// RTC Components
+i2c_dev_t dev;
+
 // Task Handles
 static TaskHandle_t bme_task_handle = NULL;
 static TaskHandle_t sync_task_handle = NULL;
@@ -68,6 +73,45 @@ static uint32_t sensor_sync_bits;
 static void restart_esp32() { // Restart ESP32
 	fflush(stdout);
 	esp_restart();
+}
+
+static void init_rtc() { // Init RTC
+	ESP_ERROR_CHECK(i2cdev_init());
+	memset(&dev, 0, sizeof(i2c_dev_t));
+	ESP_ERROR_CHECK(ds3231_init_desc(&dev, 0, RTC_SDA_GPIO, RTC_SCL_GPIO));
+}
+static void set_time() { // Set current time to some date
+	// TODO Have user input for time so actual time is set
+	struct tm time;
+
+	time.tm_year = 120; // Years since 1900
+	time.tm_mon = 6; // 0-11
+	time.tm_mday = 7; // day of month
+	time.tm_hour = 9; // 0-24
+	time.tm_min = 59;
+	time.tm_sec = 0;
+
+	ESP_ERROR_CHECK(ds3231_set_time(&dev, &time));
+}
+
+static void check_rtc_reset() {
+	// Get current time
+	struct tm time;
+	ds3231_get_time(&dev, &time);
+
+	// If year is less than 2020 (RTC was reset), set time again
+	if(time.tm_year < 120) set_time();
+}
+
+static void get_date_time(struct tm *time) {
+	// Get current time and set it to return var
+	ds3231_get_time(&dev, &(*time));
+
+	// If year is less than 2020 (RTC was reset), set time again and set new time to return var
+	if(time->tm_year < 120) {
+		set_time();
+		ds3231_get_time(&dev, &(*time));
+	}
 }
 
 static void event_handler(void *arg, esp_event_base_t event_base,		// WiFi Event Handler
@@ -153,7 +197,7 @@ void append_str(char** str, char* str_to_add) { // Create method to reallocate a
 }
 
 // Add sensor data to JSON entry
-void add_entry(char** data, bool* first, char* key, float num) {
+void add_entry(char** data, bool* first, char* name, float num) {
 	// Add a comma to the beginning of every entry except the first
 	if(*first) *first = false;
 	else append_str(data, ",");
@@ -164,13 +208,13 @@ void add_entry(char** data, bool* first, char* key, float num) {
 
 	// Create entry string
 	char *entry = NULL;
-	create_str(&entry, "\"");
+	create_str(&entry, "{ name: \"");
 
 	// Create entry using key, value, and other JSON syntax
-	append_str(&entry, key);
-	append_str(&entry, "\" : \"");
+	append_str(&entry, name);
+	append_str(&entry, "\", value: \"");
 	append_str(&entry, value);
-	append_str(&entry, "\"");
+	append_str(&entry, "\"}");
 
 	// Add entry to overall JSON data
 	append_str(data, entry);
@@ -181,17 +225,22 @@ void add_entry(char** data, bool* first, char* key, float num) {
 }
 
 void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
-	const char *TAG = "PUBLISHER";
+	const char *TAG = "Publisher";
 
-	// Set broker configuration
-	esp_mqtt_client_config_t mqtt_cfg = { .host = "70.94.9.135", .port = 1883 };
+	// Init rtc and check if time needs to be set
+	init_rtc();
+	check_rtc_reset();
 
-	// Create and initialize MQTT client
-	esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
-	esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler,
-			client);
-	esp_mqtt_client_start(client);
-	ulTaskNotifyTake( pdTRUE, portMAX_DELAY);
+//	// Set broker configuration
+//	esp_mqtt_client_config_t mqtt_cfg = { .host = "70.94.9.135", .port = 1883 };
+//
+//	// Create and initialize MQTT client
+//	esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
+//	esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler,
+//			client);
+//	esp_mqtt_client_start(client);
+//	ulTaskNotifyTake( pdTRUE, portMAX_DELAY);
+
 	for (;;) {
 		// Create and structure topic for publishing data through MQTT
 		char *topic = NULL;
@@ -202,29 +251,71 @@ void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
 
 		// Create and initially assign JSON data
 		char *data = NULL;
-		create_str(&data, "{");
+		create_str(&data, "{ \"time\": ");
 
 		// Add timestamp to data
-		char date[] = "\"6/19/2020(10:23:56)\" : {"; // TODO add actual time using RTC
+		struct tm time;
+		get_date_time(&time);
+
+		// Convert all time componenets to string
+		uint32_t year_int = time.tm_year + 1900;
+		char year[8];
+		snprintf(year, sizeof(year), "%.4d", year_int);
+
+		uint32_t month_int = time.tm_mon + 1;
+		char month[8];
+		snprintf(month, sizeof(month), "%.2d", month_int);
+
+		char day[8];
+		snprintf(day, sizeof(day), "%.2d", time.tm_mday);
+
+		char hour[8];
+		snprintf(hour, sizeof(hour), "%.2d", time.tm_hour);
+
+		char min[8];
+		snprintf(min, sizeof(min), "%.2d", time.tm_min);
+
+		char sec[8];
+		snprintf(sec, sizeof(sec), "%.2d", time.tm_sec);
+
+		// Format timestamp in standard ISO format (https://www.w3.org/TR/NOTE-datetime)
+		char *date = NULL;;
+		create_str(&date, "\"");
+		append_str(&date, year);
+		append_str(&date, "-");
+		append_str(&date, month);
+		append_str(&date, "-");
+		append_str(&date,  day);
+		append_str(&date, "T");
+		append_str(&date, hour);
+		append_str(&date, "-");
+		append_str(&date, min);
+		append_str(&date, "-");
+		append_str(&date, sec);
+		append_str(&date, "Z\", sensors: [");
+
+		// Append formatted timestamp to data
 		append_str(&data, date);
+		free(date);
+		date = NULL;
 
 		// Variable for adding comma to every entry except first
 		bool first = true;
 
 		// Check if all the sensors are active and add data to JSON string if so using corresponding key and value
 		if(bme_active) {
-			add_entry(&data, &first, "temp", _air_temp);
+			add_entry(&data, &first, "air temp", _air_temp);
 			add_entry(&data, &first, "humidity", _humidity);
 		}
 
 		// Add closing tag
-		append_str(&data, "}}");
-
-		// Publish data to MQTT broker using topic and data
-		esp_mqtt_client_publish(client, topic, data, 0, 1, 0);
+		append_str(&data, "]}");
 
 		ESP_LOGI(TAG, "Topic: %s", topic);
 		ESP_LOGI(TAG, "Message: %s", data);
+
+//		// Publish data to MQTT broker using topic and data
+//		esp_mqtt_client_publish(client, topic, data, 0, 1, 0);
 
 		// Free allocated memory
 		free(data);
