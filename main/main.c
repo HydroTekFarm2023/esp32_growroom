@@ -32,12 +32,12 @@ static EventGroupHandle_t sensor_event_group;
 #define BME_BIT           (1<<5)
 
 // Core 0 Task Priorities
-#define TIMER_ALARM_TASK_PRIORITY 1
-#define MQTT_PUBLISH_TASK_PRIORITY 2
+#define TIMER_ALARM_TASK_PRIORITY 0
+#define MQTT_PUBLISH_TASK_PRIORITY 1
 
 // Core 1 Task Priorities
-#define BME_TASK_PRIORITY 1
-#define SYNC_TASK_PRIORITY 2
+#define BME_TASK_PRIORITY 0
+#define SYNC_TASK_PRIORITY 1
 
 // GPIO Ports
 #define BME_SDA_GPIO 21                 // GPIO 21
@@ -89,7 +89,6 @@ static void restart_esp32() { // Restart ESP32
 }
 
 static void init_rtc() { // Init RTC
-	ESP_ERROR_CHECK(i2cdev_init());
 	memset(&dev, 0, sizeof(i2c_dev_t));
 	ESP_ERROR_CHECK(ds3231_init_desc(&dev, 0, RTC_SDA_GPIO, RTC_SCL_GPIO));
 }
@@ -240,10 +239,6 @@ void add_entry(char** data, bool* first, char* name, float num) {
 void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
 	const char *TAG = "Publisher";
 
-	// Init rtc and check if time needs to be set
-	init_rtc();
-	check_rtc_reset();
-
 //	// Set broker configuration
 //	esp_mqtt_client_config_t mqtt_cfg = { .host = "70.94.9.135", .port = 1883 };
 //
@@ -341,8 +336,6 @@ void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
 
 void measure_bme(void * parameter) {
 	const char *TAG = "BME";
-
-	ESP_ERROR_CHECK(i2cdev_init());
 
 	bme680_t sensor;
 	memset(&sensor, 0, sizeof(bme680_t));
@@ -487,8 +480,14 @@ void app_main(void) {							// Main Method
 	WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE,
 	portMAX_DELAY);
 
-
 	if ((eventBits & WIFI_CONNECTED_BIT) != 0) {
+		// Init i2cdev
+		ESP_ERROR_CHECK(i2cdev_init());
+
+		// Init rtc and check if time needs to be set
+		init_rtc();
+		check_rtc_reset();
+
 		sensor_event_group = xEventGroupCreate();
 		set_sensor_sync_bits(&sensor_sync_bits);
 
