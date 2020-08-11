@@ -40,10 +40,8 @@ static EventGroupHandle_t sensor_event_group;
 #define SYNC_TASK_PRIORITY 1
 
 // GPIO Ports
-#define BME_SDA_GPIO 21                 // GPIO 21
-#define RTC_SDA_GPIO 21                 // GPIO 21
-#define BME_SCL_GPIO 22                 // GPIO 22
-#define RTC_SCL_GPIO 22                 // GPIO 22
+#define I2C_SDA_GPIO 21                 // GPIO 21
+#define I2C_SCL_GPIO 22                 // GPIO 22
 #define RF_TRANSMITTER_GPIO 32			// GPIO 32
 
 #define SENSOR_MEASUREMENT_PERIOD 10000 // Measuring increment time in ms
@@ -90,7 +88,7 @@ static void restart_esp32() { // Restart ESP32
 
 static void init_rtc() { // Init RTC
 	memset(&dev, 0, sizeof(i2c_dev_t));
-	ESP_ERROR_CHECK(ds3231_init_desc(&dev, 0, RTC_SDA_GPIO, RTC_SCL_GPIO));
+	ESP_ERROR_CHECK(ds3231_init_desc(&dev, 0, I2C_SDA_GPIO, I2C_SCL_GPIO));
 }
 static void set_time() { // Set current time to some date
 	// TODO Have user input for time so actual time is set
@@ -340,7 +338,7 @@ void measure_bme(void * parameter) {
 	bme680_t sensor;
 	memset(&sensor, 0, sizeof(bme680_t));
 
-	ESP_ERROR_CHECK(bme680_init_desc(&sensor, BME680_I2C_ADDR_1, 0, BME_SDA_GPIO, BME_SCL_GPIO));
+	ESP_ERROR_CHECK(bme680_init_desc(&sensor, BME680_I2C_ADDR_1, 0, I2C_SDA_GPIO, I2C_SCL_GPIO));
 
 	// Init the sensor
 	ESP_ERROR_CHECK(bme680_init_sensor(&sensor));
