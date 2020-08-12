@@ -18,6 +18,7 @@
 #include <stdbool.h>
 
 #include "bme680.h"
+#include "ds3231.h"
 #include "rf_transmission.h"
 
 // WiFi Coordination with Event Group
@@ -30,13 +31,17 @@ static EventGroupHandle_t sensor_event_group;
 #define DELAY_BIT		    (1<<0)
 #define BME_BIT           (1<<5)
 
+// Core 0 Task Priorities
+#define TIMER_ALARM_TASK_PRIORITY 0
+#define MQTT_PUBLISH_TASK_PRIORITY 1
+
 // Core 1 Task Priorities
-#define BME_TASK_PRIORITY 1
-#define SYNC_TASK_PRIORITY 2
+#define BME_TASK_PRIORITY 0
+#define SYNC_TASK_PRIORITY 1
 
 // GPIO Ports
-#define BME_SCL_GPIO 22                 // GPIO 22
-#define BME_SDA_GPIO 21                 // GPIO 21
+#define I2C_SDA_GPIO 21                 // GPIO 21
+#define I2C_SCL_GPIO 22                 // GPIO 22
 #define RF_TRANSMITTER_GPIO 32			// GPIO 32
 
 #define SENSOR_MEASUREMENT_PERIOD 10000 // Measuring increment time in ms
@@ -54,9 +59,21 @@ static char system_id[] = "system2";
 static float _air_temp = 0;
 static float _humidity = 0;
 
+// RTC Components
+i2c_dev_t dev;
+
+// Timer and alarm periods
+static const uint32_t timer_alarm_urgent_delay = 10;
+static const uint32_t timer_alarm_regular_delay = 50;
+
+// Timers
+
+// Alarms
+
 // Task Handles
 static TaskHandle_t bme_task_handle = NULL;
 static TaskHandle_t sync_task_handle = NULL;
+static TaskHandle_t timer_alarm_task_handle = NULL;
 static TaskHandle_t publish_task_handle = NULL;
 
 // Sensor Active Status
@@ -67,6 +84,44 @@ static uint32_t sensor_sync_bits;
 static void restart_esp32() { // Restart ESP32
 	fflush(stdout);
 	esp_restart();
+}
+
+static void init_rtc() { // Init RTC
+	memset(&dev, 0, sizeof(i2c_dev_t));
+	ESP_ERROR_CHECK(ds3231_init_desc(&dev, 0, I2C_SDA_GPIO, I2C_SCL_GPIO));
+}
+static void set_time() { // Set current time to some date
+	// TODO Have user input for time so actual time is set
+	struct tm time;
+
+	time.tm_year = 120; // Years since 1900
+	time.tm_mon = 6; // 0-11
+	time.tm_mday = 7; // day of month
+	time.tm_hour = 9; // 0-24
+	time.tm_min = 59;
+	time.tm_sec = 0;
+
+	ESP_ERROR_CHECK(ds3231_set_time(&dev, &time));
+}
+
+static void check_rtc_reset() {
+	// Get current time
+	struct tm time;
+	ds3231_get_time(&dev, &time);
+
+	// If year is less than 2020 (RTC was reset), set time again
+	if(time.tm_year < 120) set_time();
+}
+
+static void get_date_time(struct tm *time) {
+	// Get current time and set it to return var
+	ds3231_get_time(&dev, &(*time));
+
+	// If year is less than 2020 (RTC was reset), set time again and set new time to return var
+	if(time->tm_year < 120) {
+		set_time();
+		ds3231_get_time(&dev, &(*time));
+	}
 }
 
 static void event_handler(void *arg, esp_event_base_t event_base,		// WiFi Event Handler
@@ -152,7 +207,7 @@ void append_str(char** str, char* str_to_add) { // Create method to reallocate a
 }
 
 // Add sensor data to JSON entry
-void add_entry(char** data, bool* first, char* key, float num) {
+void add_entry(char** data, bool* first, char* name, float num) {
 	// Add a comma to the beginning of every entry except the first
 	if(*first) *first = false;
 	else append_str(data, ",");
@@ -163,13 +218,13 @@ void add_entry(char** data, bool* first, char* key, float num) {
 
 	// Create entry string
 	char *entry = NULL;
-	create_str(&entry, "\"");
+	create_str(&entry, "{ name: \"");
 
 	// Create entry using key, value, and other JSON syntax
-	append_str(&entry, key);
-	append_str(&entry, "\" : \"");
+	append_str(&entry, name);
+	append_str(&entry, "\", value: \"");
 	append_str(&entry, value);
-	append_str(&entry, "\"");
+	append_str(&entry, "\"}");
 
 	// Add entry to overall JSON data
 	append_str(data, entry);
@@ -180,17 +235,18 @@ void add_entry(char** data, bool* first, char* key, float num) {
 }
 
 void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
-	const char *TAG = "PUBLISHER";
+	const char *TAG = "Publisher";
 
-	// Set broker configuration
-	esp_mqtt_client_config_t mqtt_cfg = { .host = "70.94.9.135", .port = 1883 };
+//	// Set broker configuration
+//	esp_mqtt_client_config_t mqtt_cfg = { .host = "70.94.9.135", .port = 1883 };
+//
+//	// Create and initialize MQTT client
+//	esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
+//	esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler,
+//			client);
+//	esp_mqtt_client_start(client);
+//	ulTaskNotifyTake( pdTRUE, portMAX_DELAY);
 
-	// Create and initialize MQTT client
-	esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
-	esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler,
-			client);
-	esp_mqtt_client_start(client);
-	ulTaskNotifyTake( pdTRUE, portMAX_DELAY);
 	for (;;) {
 		// Create and structure topic for publishing data through MQTT
 		char *topic = NULL;
@@ -201,48 +257,88 @@ void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
 
 		// Create and initially assign JSON data
 		char *data = NULL;
-		create_str(&data, "{");
+		create_str(&data, "{ \"time\": ");
 
 		// Add timestamp to data
-		char date[] = "\"6/19/2020(10:23:56)\" : {"; // TODO add actual time using RTC
+		struct tm time;
+		get_date_time(&time);
+
+		// Convert all time componenets to string
+		uint32_t year_int = time.tm_year + 1900;
+		char year[8];
+		snprintf(year, sizeof(year), "%.4d", year_int);
+
+		uint32_t month_int = time.tm_mon + 1;
+		char month[8];
+		snprintf(month, sizeof(month), "%.2d", month_int);
+
+		char day[8];
+		snprintf(day, sizeof(day), "%.2d", time.tm_mday);
+
+		char hour[8];
+		snprintf(hour, sizeof(hour), "%.2d", time.tm_hour);
+
+		char min[8];
+		snprintf(min, sizeof(min), "%.2d", time.tm_min);
+
+		char sec[8];
+		snprintf(sec, sizeof(sec), "%.2d", time.tm_sec);
+
+		// Format timestamp in standard ISO format (https://www.w3.org/TR/NOTE-datetime)
+		char *date = NULL;;
+		create_str(&date, "\"");
+		append_str(&date, year);
+		append_str(&date, "-");
+		append_str(&date, month);
+		append_str(&date, "-");
+		append_str(&date,  day);
+		append_str(&date, "T");
+		append_str(&date, hour);
+		append_str(&date, "-");
+		append_str(&date, min);
+		append_str(&date, "-");
+		append_str(&date, sec);
+		append_str(&date, "Z\", sensors: [");
+
+		// Append formatted timestamp to data
 		append_str(&data, date);
+		free(date);
+		date = NULL;
 
 		// Variable for adding comma to every entry except first
 		bool first = true;
 
 		// Check if all the sensors are active and add data to JSON string if so using corresponding key and value
 		if(bme_active) {
-			add_entry(&data, &first, "temp", _air_temp);
+			add_entry(&data, &first, "air temp", _air_temp);
 			add_entry(&data, &first, "humidity", _humidity);
 		}
 
 		// Add closing tag
-		append_str(&data, "}}");
-
-		// Publish data to MQTT broker using topic and data
-		esp_mqtt_client_publish(client, topic, data, 0, 1, 0);
+		append_str(&data, "]}");
 
 		ESP_LOGI(TAG, "Topic: %s", topic);
 		ESP_LOGI(TAG, "Message: %s", data);
+
+//		// Publish data to MQTT broker using topic and data
+//		esp_mqtt_client_publish(client, topic, data, 0, 1, 0);
 
 		// Free allocated memory
 		free(data);
 		data = NULL;
 
 		// Publish data every 20 seconds
-		vTaskDelay(pdMS_TO_TICKS(5000));
+		vTaskDelay(pdMS_TO_TICKS(SENSOR_MEASUREMENT_PERIOD));
 	}
 }
 
 void measure_bme(void * parameter) {
 	const char *TAG = "BME";
 
-	ESP_ERROR_CHECK(i2cdev_init());
-
 	bme680_t sensor;
 	memset(&sensor, 0, sizeof(bme680_t));
 
-	ESP_ERROR_CHECK(bme680_init_desc(&sensor, BME680_I2C_ADDR_1, 0, BME_SDA_GPIO, BME_SCL_GPIO));
+	ESP_ERROR_CHECK(bme680_init_desc(&sensor, BME680_I2C_ADDR_1, 0, I2C_SDA_GPIO, I2C_SCL_GPIO));
 
 	// Init the sensor
 	ESP_ERROR_CHECK(bme680_init_sensor(&sensor));
@@ -304,6 +400,33 @@ void sync_task(void *parameter) {				// Sensor Synchronization Task
 	}
 }
 
+static void manage_timers_alarms(void *parameter) {
+	const char *TAG = "TIMER_TASK";
+
+	// Initialize timers
+
+	// Initialize alarms
+
+	ESP_LOGI(TAG, "Timers initialized");
+
+	for(;;) {
+		// Get current unix time
+		time_t unix_time;
+		get_unix_time(&dev, &unix_time);
+
+		// Check if timers are done
+
+		// Check if alarms are done
+
+		// Check if any timer or alarm is urgent
+		bool urgent = false;
+
+		// Set priority and delay based on urgency of timers and alarms
+		vTaskPrioritySet(timer_alarm_task_handle, urgent ? (configMAX_PRIORITIES - 1) : TIMER_ALARM_TASK_PRIORITY);
+		vTaskDelay(pdMS_TO_TICKS(urgent ? timer_alarm_urgent_delay : timer_alarm_regular_delay));
+	}
+}
+
 void send_rf_transmission(){
 	// Setup Transmission Protcol
 	struct binary_bits low_bit = {3, 1};
@@ -355,13 +478,20 @@ void app_main(void) {							// Main Method
 	WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE,
 	portMAX_DELAY);
 
-
 	if ((eventBits & WIFI_CONNECTED_BIT) != 0) {
+		// Init i2cdev
+		ESP_ERROR_CHECK(i2cdev_init());
+
+		// Init rtc and check if time needs to be set
+		init_rtc();
+		check_rtc_reset();
+
 		sensor_event_group = xEventGroupCreate();
 		set_sensor_sync_bits(&sensor_sync_bits);
 
 		// Create core 0 tasks
-		xTaskCreatePinnedToCore(publish_data, "publish_task", 2500, NULL, 1, &publish_task_handle, 0);
+		xTaskCreatePinnedToCore(manage_timers_alarms, "timer_alarm_task", 2500, NULL, TIMER_ALARM_TASK_PRIORITY, &timer_alarm_task_handle, 0);
+		xTaskCreatePinnedToCore(publish_data, "publish_task", 2500, NULL, MQTT_PUBLISH_TASK_PRIORITY, &publish_task_handle, 0);
 
 		// Create core 1 tasks
 		if(bme_active) xTaskCreatePinnedToCore(measure_bme, "bme_task", 2500, NULL, BME_TASK_PRIORITY, &bme_task_handle, 1);
