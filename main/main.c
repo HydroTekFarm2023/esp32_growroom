@@ -34,6 +34,7 @@ static EventGroupHandle_t sensor_event_group;
 // Core 0 Task Priorities
 #define TIMER_ALARM_TASK_PRIORITY 0
 #define MQTT_PUBLISH_TASK_PRIORITY 1
+#define SENSOR_CONTROL_TASK_PRIORITY 2
 
 // Core 1 Task Priorities
 #define BME_TASK_PRIORITY 0
@@ -59,6 +60,12 @@ static char system_id[] = "system2";
 static float _air_temp = 0;
 static float _humidity = 0;
 
+// Temp control
+static float target_temp = 25;
+static float desired_margin_error = 1.5;
+static float optimal_margin_error = 0.75;
+static bool temp_checks[6] = {false, false, false, false, false, false};
+
 // RTC Components
 i2c_dev_t dev;
 
@@ -75,6 +82,7 @@ static TaskHandle_t bme_task_handle = NULL;
 static TaskHandle_t sync_task_handle = NULL;
 static TaskHandle_t timer_alarm_task_handle = NULL;
 static TaskHandle_t publish_task_handle = NULL;
+static TaskHandle_t sensor_control_task_handle = NULL;
 
 // Sensor Active Status
 static bool bme_active = true;
@@ -332,6 +340,20 @@ void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
 	}
 }
 
+void check_temperature() {
+
+}
+
+void sensor_control(void * parameter) { // Sensor control task
+	for(;;) {
+		// Check sensors
+		check_temperature();
+
+		// Wait till next sensor readings
+		vTaskDelay(pdMS_TO_TICKS(SENSOR_MEASUREMENT_PERIOD));
+	}
+}
+
 void measure_bme(void * parameter) {
 	const char *TAG = "BME";
 
@@ -492,6 +514,7 @@ void app_main(void) {							// Main Method
 		// Create core 0 tasks
 		xTaskCreatePinnedToCore(manage_timers_alarms, "timer_alarm_task", 2500, NULL, TIMER_ALARM_TASK_PRIORITY, &timer_alarm_task_handle, 0);
 		xTaskCreatePinnedToCore(publish_data, "publish_task", 2500, NULL, MQTT_PUBLISH_TASK_PRIORITY, &publish_task_handle, 0);
+		xTaskCreatePinnedToCore(sensor_control, "sensor_control_task", 2500, NULL, SENSOR_CONTROL_TASK_PRIORITY, &sensor_control_task_handle, 0);
 
 		// Create core 1 tasks
 		if(bme_active) xTaskCreatePinnedToCore(measure_bme, "bme_task", 2500, NULL, BME_TASK_PRIORITY, &bme_task_handle, 1);
