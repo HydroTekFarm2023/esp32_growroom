@@ -65,7 +65,7 @@ static bool changing_temp = false;
 static float target_temp = 25;
 static float desired_margin_error = 1.5;
 static float optimal_margin_error = 0.75;
-static bool temp_checks[2] = {false, false};
+static bool temp_checks[6] = {false, false, false, false, false, false};
 
 // RTC Components
 i2c_dev_t dev;
@@ -350,19 +350,25 @@ void reset_sensor_checks(bool *sensor_checks) { // Reset sensor check vars
 void check_temperature() {
 	char *TAG = "TEMP_CONTROL";
 
+	// Check if temp is being currently changed
 	if(changing_temp) {
+		// If temp is good now, turn off heater and cooler
 		if(_air_temp > target_temp - optimal_margin_error && _air_temp < target_temp + optimal_margin_error) {
 			// TODO turn off cooling and heating mechanisms
 			ESP_LOGI(TAG, "Temperature control done");
 			changing_temp = false;
 		}
+	//  Temp is not being currently changed
 	} else {
+		// Check if temp is too low
 		if(_air_temp < target_temp - desired_margin_error) {
+			// If checks are done, turn on heater and reset checks
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on heating mechanism
 				ESP_LOGI(TAG, "Heating room");
 				reset_sensor_checks(temp_checks);
 				changing_temp = true;
+			// Otherwise, iterate through checks and set next one to true
 			} else {
 				for(int i = 0; i < sizeof(temp_checks); i++) {
 					if(!temp_checks[i]) {
@@ -372,12 +378,15 @@ void check_temperature() {
 					}
 				}
 			}
+		// Check if temp is too high
 		} else if(_air_temp > target_temp + desired_margin_error)  {
+			// If checks are done, turn on cooler and reset checks
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on cooling mechanism
 				ESP_LOGI(TAG, "Cooling room");
 				reset_sensor_checks(temp_checks);
 				changing_temp = true;
+			// Otherwise, iterate through checks and set next one to true
 			} else {
 				for(int i = 0; i < sizeof(temp_checks); i++) {
 					if(!temp_checks[i]) {
@@ -387,6 +396,7 @@ void check_temperature() {
 					}
 				}
 			}
+		// If temp is fine, just reset checks
 		} else {
 			reset_sensor_checks(temp_checks);
 		}
@@ -439,9 +449,7 @@ void measure_bme(void * parameter) {
 				ESP_LOGI(TAG, "Temperature: %.2f", values.temperature);
 				ESP_LOGI(TAG, "Humidity: %.2f", values.humidity);
 
-				//_air_temp = values.temperature;
-				if(changing_temp) _air_temp = 24.27;
-				else  _air_temp = 23.46;
+				_air_temp = values.temperature;
 				_humidity = values.humidity;
 			}
 		}
