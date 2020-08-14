@@ -61,6 +61,7 @@ static float _air_temp = 0;
 static float _humidity = 0;
 
 // Temp control
+static bool changing_temp = false;
 static float target_temp = 25;
 static float desired_margin_error = 1.5;
 static float optimal_margin_error = 0.75;
@@ -340,8 +341,53 @@ void publish_data(void *parameter) {			// MQTT Setup and Data Publishing Task
 	}
 }
 
-void check_temperature() {
+void reset_sensor_checks(bool *sensor_checks) { // Reset sensor check vars
+	for(int i = 0; i < sizeof(sensor_checks); i++) {
+		sensor_checks[i] = false;
+	}
+}
 
+void check_temperature() {
+	char *TAG = "TEMP_CONTROL";
+
+	if(changing_temp) {
+		if(_air_temp > target_temp - optimal_margin_error && _air_temp < target_temp + optimal_margin_error) {
+			// TODO turn off cooling and heating mechanisms
+			changing_temp = false;
+		}
+	} else {
+		if(_air_temp < target_temp - desired_margin_error) {
+			if(temp_checks[sizeof(temp_checks) - 1])  {
+				// TODO turn on heating mechanism
+				reset_sensor_checks(temp_checks);
+				changing_temp = true;
+			} else {
+				for(int i = 0; i < sizeof(temp_checks); i++) {
+					if(!temp_checks[i]) {
+						temp_checks[i] = true;
+						ESP_LOGI(TAG, "Temp check %d done", i + 1);
+						break;
+					}
+				}
+			}
+		} else if(_air_temp > target_temp + desired_margin_error)  {
+			if(temp_checks[sizeof(temp_checks) - 1])  {
+				// TODO turn on cooling mechanism
+				reset_sensor_checks(temp_checks);
+				changing_temp = true;
+			} else {
+				for(int i = 0; i < sizeof(temp_checks); i++) {
+					if(!temp_checks[i]) {
+						temp_checks[i] = true;
+						ESP_LOGI(TAG, "Temp check %d done", i + 1);
+						break;
+					}
+				}
+			}
+		} else {
+			reset_sensor_checks(temp_checks);
+		}
+	}
 }
 
 void sensor_control(void * parameter) { // Sensor control task
