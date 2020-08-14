@@ -65,7 +65,7 @@ static bool changing_temp = false;
 static float target_temp = 25;
 static float desired_margin_error = 1.5;
 static float optimal_margin_error = 0.75;
-static bool temp_checks[6] = {false, false, false, false, false, false};
+static bool temp_checks[2] = {false, false};
 
 // RTC Components
 i2c_dev_t dev;
@@ -353,12 +353,14 @@ void check_temperature() {
 	if(changing_temp) {
 		if(_air_temp > target_temp - optimal_margin_error && _air_temp < target_temp + optimal_margin_error) {
 			// TODO turn off cooling and heating mechanisms
+			ESP_LOGI(TAG, "Temperature control done");
 			changing_temp = false;
 		}
 	} else {
 		if(_air_temp < target_temp - desired_margin_error) {
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on heating mechanism
+				ESP_LOGI(TAG, "Heating room");
 				reset_sensor_checks(temp_checks);
 				changing_temp = true;
 			} else {
@@ -373,6 +375,7 @@ void check_temperature() {
 		} else if(_air_temp > target_temp + desired_margin_error)  {
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on cooling mechanism
+				ESP_LOGI(TAG, "Cooling room");
 				reset_sensor_checks(temp_checks);
 				changing_temp = true;
 			} else {
@@ -436,7 +439,9 @@ void measure_bme(void * parameter) {
 				ESP_LOGI(TAG, "Temperature: %.2f", values.temperature);
 				ESP_LOGI(TAG, "Humidity: %.2f", values.humidity);
 
-				_air_temp = values.temperature;
+				//_air_temp = values.temperature;
+				if(changing_temp) _air_temp = 24.27;
+				else  _air_temp = 23.46;
 				_humidity = values.humidity;
 			}
 		}
