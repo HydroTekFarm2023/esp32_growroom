@@ -63,9 +63,16 @@ static float _humidity = 0;
 // Temp control
 static bool changing_temp = false;
 static float target_temp = 25;
-static float desired_margin_error = 1.5;
-static float optimal_margin_error = 0.75;
+static float temp_desired_margin_error = 1.5;
+static float temp_optimal_margin_error = 0.75;
 static bool temp_checks[6] = {false, false, false, false, false, false};
+
+// Humidity control
+static bool changing_humidity = false;
+static float target_humidity = 25;
+static float humidity_desired_margin_error = 1.5;
+static float humidity_optimal_margin_error = 0.75;
+static bool humidity_checks[6] = {false, false, false, false, false, false};
 
 // RTC Components
 i2c_dev_t dev;
@@ -353,7 +360,7 @@ void check_temperature() {
 	// Check if temp is being currently changed
 	if(changing_temp) {
 		// If temp is good now, turn off heater and cooler
-		if(_air_temp > target_temp - optimal_margin_error && _air_temp < target_temp + optimal_margin_error) {
+		if(_air_temp > target_temp - temp_optimal_margin_error && _air_temp < target_temp + temp_optimal_margin_error) {
 			// TODO turn off cooling and heating mechanisms
 			ESP_LOGI(TAG, "Temperature control done");
 			changing_temp = false;
@@ -361,7 +368,7 @@ void check_temperature() {
 	//  Temp is not being currently changed
 	} else {
 		// Check if temp is too low
-		if(_air_temp < target_temp - desired_margin_error) {
+		if(_air_temp < target_temp - temp_desired_margin_error) {
 			// If checks are done, turn on heater and reset checks
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on heating mechanism
@@ -379,7 +386,7 @@ void check_temperature() {
 				}
 			}
 		// Check if temp is too high
-		} else if(_air_temp > target_temp + desired_margin_error)  {
+		} else if(_air_temp > target_temp + temp_desired_margin_error)  {
 			// If checks are done, turn on cooler and reset checks
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on cooling mechanism
