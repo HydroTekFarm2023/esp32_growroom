@@ -469,7 +469,7 @@ void check_humidity() {
 void sensor_control(void * parameter) { // Sensor control task
 	for(;;) {
 		// Check sensors
-		//check_temperature();
+		check_temperature();
 		check_humidity();
 
 		// Wait till next sensor readings
