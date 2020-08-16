@@ -63,9 +63,16 @@ static float _humidity = 0;
 // Temp control
 static bool changing_temp = false;
 static float target_temp = 25;
-static float desired_margin_error = 1.5;
-static float optimal_margin_error = 0.75;
+static float temp_desired_margin_error = 1.5;
+static float temp_optimal_margin_error = 0.75;
 static bool temp_checks[6] = {false, false, false, false, false, false};
+
+// Humidity control
+static bool changing_humidity = false;
+static float target_humidity = 40;
+static float humidity_desired_margin_error = 5;
+static float humidity_optimal_margin_error = 2.5;
+static bool humidity_checks[6] = {false, false, false, false, false, false};
 
 // RTC Components
 i2c_dev_t dev;
@@ -353,7 +360,7 @@ void check_temperature() {
 	// Check if temp is being currently changed
 	if(changing_temp) {
 		// If temp is good now, turn off heater and cooler
-		if(_air_temp > target_temp - optimal_margin_error && _air_temp < target_temp + optimal_margin_error) {
+		if(_air_temp > target_temp - temp_optimal_margin_error && _air_temp < target_temp + temp_optimal_margin_error) {
 			// TODO turn off cooling and heating mechanisms
 			ESP_LOGI(TAG, "Temperature control done");
 			changing_temp = false;
@@ -361,7 +368,7 @@ void check_temperature() {
 	//  Temp is not being currently changed
 	} else {
 		// Check if temp is too low
-		if(_air_temp < target_temp - desired_margin_error) {
+		if(_air_temp < target_temp - temp_desired_margin_error) {
 			// If checks are done, turn on heater and reset checks
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on heating mechanism
@@ -379,7 +386,7 @@ void check_temperature() {
 				}
 			}
 		// Check if temp is too high
-		} else if(_air_temp > target_temp + desired_margin_error)  {
+		} else if(_air_temp > target_temp + temp_desired_margin_error)  {
 			// If checks are done, turn on cooler and reset checks
 			if(temp_checks[sizeof(temp_checks) - 1])  {
 				// TODO turn on cooling mechanism
@@ -403,10 +410,67 @@ void check_temperature() {
 	}
 }
 
+void check_humidity() {
+	char *TAG = "HUMIDITY_CONTROL";
+
+	// Check if humidity is being currently changed
+	if(changing_humidity) {
+		// If humidity is good now, turn off humidifier and dehumidifer
+		if(_humidity > target_humidity - humidity_optimal_margin_error && _humidity < target_humidity + humidity_optimal_margin_error) {
+			// TODO turn off humidifier and dehumidifier mechanisms
+			ESP_LOGI(TAG, "Humidity control done");
+			changing_humidity = false;
+		}
+	//  Humidity is not being currently changed
+	} else {
+		// Check if humidity is too low
+		if(_humidity < target_humidity - humidity_desired_margin_error) {
+			// If checks are done, turn on humidifier and reset checks
+			if(humidity_checks[sizeof(humidity_checks) - 1])  {
+				// TODO turn on humidifier mechanism
+				ESP_LOGI(TAG, "Humidifying room");
+				reset_sensor_checks(humidity_checks);
+				changing_humidity = true;
+			// Otherwise, iterate through checks and set next one to true
+			} else {
+				for(int i = 0; i < sizeof(humidity_checks); i++) {
+					if(!humidity_checks[i]) {
+						humidity_checks[i] = true;
+						ESP_LOGI(TAG, "Humidity check %d done", i + 1);
+						break;
+					}
+				}
+			}
+		// Check if humidity is too high
+		} else if(_humidity > target_humidity + humidity_desired_margin_error)  {
+			// If checks are done, turn on dehumidifier and reset checks
+			if(humidity_checks[sizeof(humidity_checks) - 1])  {
+				// TODO turn on dehumidifier mechanism
+				ESP_LOGI(TAG, "Dehumidifying room");
+				reset_sensor_checks(humidity_checks);
+				changing_humidity = true;
+			// Otherwise, iterate through checks and set next one to true
+			} else {
+				for(int i = 0; i < sizeof(humidity_checks); i++) {
+					if(!humidity_checks[i]) {
+						humidity_checks[i] = true;
+						ESP_LOGI(TAG, "Humidity check %d done", i + 1);
+						break;
+					}
+				}
+			}
+		// If humidity is fine, just reset checks
+		} else {
+			reset_sensor_checks(humidity_checks);
+		}
+	}
+}
+
 void sensor_control(void * parameter) { // Sensor control task
 	for(;;) {
 		// Check sensors
 		check_temperature();
+		check_humidity();
 
 		// Wait till next sensor readings
 		vTaskDelay(pdMS_TO_TICKS(SENSOR_MEASUREMENT_PERIOD));
